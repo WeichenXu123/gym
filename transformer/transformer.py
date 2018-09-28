@@ -3,7 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 from keras import Input, Model
-from keras.layers import Wrapper
+from keras.layers import Lambda, Wrapper
 from keras import backend as K
 
 from attention import Attention, SelfAttention
@@ -29,7 +29,7 @@ class Transformer(Model):
         assert isinstance(inputs, (list, tuple)) and len(inputs) == 2
         x = inputs[0]
         targets = inputs[1]
-        attention_bias = get_padding_bias(x)
+        attention_bias = padding_bias(x)
 
         encoder_outputs = self.encode(x, attention_bias, train=train)
         logits = self.decode(targets, encoder_outputs, attention_bias, train=train)
@@ -40,13 +40,10 @@ class Transformer(Model):
         return input_shape[0] + (self.params.hidden_size,)
 
     def encode(self, inputs, attention_bias, train):
-        embedded_inputs = self.embedding_softmax_layer(inputs)
-        inputs_padding = get_padding(inputs)
+        embedded_inputs = self.embedding_softmax_layer(inputs, do_embedding=True)
+        # inputs_padding = get_padding(inputs)
 
-        length = K.shape(embedded_inputs)[1]
-        pos_encoding = get_position_encoding(length, self.params.hidden_size)
-        encoder_inputs = embedded_inputs + pos_encoding
-
+        encoder_inputs = with_position_encoding(embedded_inputs, self.params.hidden_size)
         if train:
             encoder_inputs = K.dropout(
                 encoder_inputs, self.params.layer_postprocess_dropout)
@@ -55,7 +52,7 @@ class Transformer(Model):
         return self.encoder_stack([encoder_inputs, attention_bias], train=train)
 
     def decode(self, targets, encoder_outputs, attention_bias, train):
-        decoder_inputs = self.embedding_softmax_layer(targets)
+        decoder_inputs = self.embedding_softmax_layer(targets, do_embedding=True)
         decoder_inputs_shape = K.shape(decoder_inputs)
         length = decoder_inputs_shape[1]
         decoder_inputs = K.slice(K2.pad(decoder_inputs, [[0, 0], [1, 0], [0, 0]]),
@@ -74,7 +71,7 @@ class Transformer(Model):
              encoder_outputs,
              decoder_self_attention_bias,
              attention_bias], train=train)
-        logits = self.embedding_softmax_layer.linear(outputs)
+        logits = self.embedding_softmax_layer(outputs, do_embedding=False)
         return logits
 
     @property
