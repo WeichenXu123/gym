@@ -4,7 +4,7 @@ from __future__ import print_function
 
 from keras import backend as K
 from keras.engine.base_layer import Layer
-from keras.layers import Dense
+from keras.layers import Dense, Dropout
 
 import backend2 as K2
 
@@ -23,7 +23,7 @@ class Attention(Layer):
         super(Attention, self).__init__(**kwargs)
         self.hidden_size = hidden_size
         self.num_heads = num_heads
-        self.attention_dropout = attention_dropout
+        self.attention_dropout_layer = Dropout(attention_dropout)
 
         # Layers for linearly projecting the queries, keys, and values.
         self.q_dense_layer = Dense(hidden_size, use_bias=False, name=self.name + "_q")
@@ -58,11 +58,15 @@ class Attention(Layer):
         return input_shape[0]
 
     # input [batch_size, seq_len, input_vec_size]
-    def call(self, inputs, train=True, cache=None):
-        assert isinstance(inputs, (list, tuple)) and len(inputs) == 3
-        x = inputs[0]
-        y = inputs[1]
-        bias = inputs[2]
+    def call(self, inputs, cache=None, **kwargs):
+        if len(inputs) == 3:
+            x = inputs[0]
+            y = inputs[1]
+            bias = inputs[2]
+        elif len(inputs) == 2:
+            x = inputs[0]
+            y = inputs[0]
+            bias = inputs[1]
 
         q = self.q_dense_layer(x)
         k = self.k_dense_layer(y)
@@ -92,8 +96,7 @@ class Attention(Layer):
         logits = K2.matmul(q, K.permute_dimensions(k, (0, 1, 3, 2)))
         logits += bias
         weights = K.softmax(logits, axis=-1)
-        if train:
-            weights = K.dropout(weights, self.attention_dropout)
+        weights = self.attention_dropout_layer(weights)
         attention_output = K2.matmul(weights, v)
 
         # Recombine heads --> [batch_size, length, hidden_size]
@@ -106,11 +109,15 @@ class Attention(Layer):
     # TODO: add get_config/from_config
 
 
+"""
 class SelfAttention(Attention):
-    """Multiheaded self-attention layer."""
 
-    def call(self, inputs, train=True, cache=None):
+    def call(self, inputs, cache=None, **kwargs):
         assert isinstance(inputs, (list, tuple)) and len(inputs) == 2
         x = inputs[0]
         bias = inputs[1]
-        return super(SelfAttention, self).call([x, x, bias], train=train, cache=cache)
+        return super(SelfAttention, self).call([x, x, bias], cache=cache, **kwargs)
+"""
+
+
+

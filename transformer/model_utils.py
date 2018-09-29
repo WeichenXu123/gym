@@ -87,3 +87,7 @@ class LayerNormalization(Layer):
         variance = K.mean(K.square(x - mean), axis=[-1], keepdims=True)
         norm_x = (x - mean) * K.pow(variance + epsilon, -0.5)
         return norm_x * self.scale + self.bias
+
+
+class WeightsRef(object):
+    pass

@@ -3,11 +3,11 @@ from __future__ import division
 from __future__ import print_function
 
 from keras import Input, Model
-from keras.layers import Lambda, Wrapper
+from keras.layers import Dropout, Lambda, Wrapper
 from keras import backend as K
 
-from attention import Attention, SelfAttention
-from ffn import FeedFowardNetwork
+from attention import Attention
+from ffn import FeedFowardNetwork, feed_forward_network
 from embedding import EmbeddingSharedWeights
 from model_utils import *
 from backend2 import sequence_beam_search
@@ -257,8 +257,31 @@ class PrePostProcessingWrapper(Wrapper):
 
         # Postprocessing: apply dropout and residual connection
         if train:
-            y = K.dropout(y, self.postprocess_dropout)
+           y = K.dropout(y, self.postprocess_dropout)
         return x + y
+
+
+def pre_post_processor_wrapper(processor, inputs, params):
+    layer_norm = LayerNormalization(params.hidden_size)
+    dropout_layer = Dropout(params.layer_postprocess_dropout)
+    if isinstance(inputs, list):
+        x = inputs[0]
+    else:
+        x = inputs
+    y = layer_norm(x)
+
+    if isinstance(inputs, list):
+        processor_inputs = [y] + inputs[1:]
+    else:
+        processor_inputs = y
+    y, iwr = processor(processor_inputs)
+    y = dropout_layer(y)
+    y = Lambda(lambda x: x[0] + x[1])([x, y])
+
+    wr = WeightsRef()
+    wr.layer_norm = layer_norm
+    wr.layer = iwr
+    return y, wr
 
 
 class EncoderStack(Layer):
@@ -268,7 +291,7 @@ class EncoderStack(Layer):
         self.layers = []
         for _ in range(params.num_hidden_layers):
             # Create sublayers for each layer.
-            self_attention_layer = SelfAttention(params.hidden_size,
+            self_attention_layer = Attention(params.hidden_size,
                                              params.num_heads,
                                              params.attention_dropout)
             feed_forward_network = FeedFowardNetwork(params.hidden_size,
@@ -302,15 +325,41 @@ class EncoderStack(Layer):
     # TODO: add get_config/from_config
 
 
+def encoder_stack(embedded_input, attention_bias, params):
+
+    def self_attention_processor(inputs):
+        self_attention_layer = Attention(params.hidden_size,
+                                         params.num_heads,
+                                         params.attention_dropout)
+        return self_attention_layer(inputs), self_attention_layer
+
+    def ffn_processor(inputs):
+        return feed_forward_network(inputs,
+                                    params.hidden_size,
+                                    params.filter_size,
+                                    params.relu_dropout)
+
+    output_normalization = LayerNormalization(params.hidden_size)
+
+    y = embedded_input
+    for _ in range(params.num_hidden_layers):
+        y = pre_post_processor_wrapper(self_attention_processor,
+                                   [y, attention_bias],
+                                   params)
+        y = pre_post_processor_wrapper(ffn_processor, y, params)
+
+    return output_normalization(y)
+
+
 class DecoderStack(Layer):
 
     def __init__(self, params):
         super(DecoderStack, self).__init__()
         self.layers = []
         for _ in range(params.num_hidden_layers):
-            self_attention_layer = SelfAttention(params.hidden_size,
-                                                 params.num_heads,
-                                                 params.attention_dropout)
+            self_attention_layer = Attention(params.hidden_size,
+                                             params.num_heads,
+                                             params.attention_dropout)
             enc_dec_attention_layer = Attention(params.hidden_size,
                                                 params.num_heads,
                                                 params.attention_dropout)
@@ -347,8 +396,7 @@ class DecoderStack(Layer):
 
             y = self_attention_layer(
                 [y, decoder_self_attention_bias],
-                cache=layer_cache,
-                train=train)
+                cache=layer_cache, train=train)
             y = enc_dec_attention_layer(
                 [y, encoder_outputs, attention_bias], train=train)
             y = feed_forward_network(y, train=train)
