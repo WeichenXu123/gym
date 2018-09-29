@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 from keras import Input, Model
+from keras.engine.network import Network
 from keras.layers import Dropout, Lambda, Wrapper
 from keras import backend as K
 
@@ -22,8 +23,31 @@ class Transformer(Model):
         self.params = params
         self.embedding_softmax_layer = EmbeddingSharedWeights(
             params.vocab_size, params.hidden_size)
-        self.encoder_stack = EncoderStack(params)
+        # self.encoder_stack = EncoderStack(params)
         self.decoder_stack = DecoderStack(params)
+
+        encoder_inputs = Input(shape=(None, params.hidden_size))
+        attention_bias = Input(shape=(1, 1, None))
+        encoder_output, encoder_stack_wr = encoder_stack(encoder_inputs, attention_bias, params)
+        self.encoder_stack_network = Network([encoder_inputs, attention_bias], encoder_output)
+        self.encoder_stack = encoder_stack_wr
+
+        """
+        decoder_inputs = Input(shape=(None, params.hidden_size))
+        encoder_outputs = Input(shape=(None, params.hidden_size))
+        decoder_self_attention_bias = Input(shape=(1, None, None))
+        decoder_output, decoder_stack_wr = decoder_stack(decoder_inputs,
+                                                         encoder_outputs,
+                                                         decoder_self_attention_bias,
+                                                         attention_bias,
+                                                         params)
+        self.decoder_stack_network = Network([decoder_inputs,
+                                              encoder_outputs,
+                                              decoder_self_attention_bias,
+                                              attention_bias],
+                                             decoder_output)
+        self.decoder_stack = decoder_stack_wr
+        """
 
     def call(self, inputs, train=True):
         assert isinstance(inputs, (list, tuple)) and len(inputs) == 2
@@ -44,12 +68,10 @@ class Transformer(Model):
         # inputs_padding = get_padding(inputs)
 
         encoder_inputs = with_position_encoding(embedded_inputs, self.params.hidden_size)
-        if train:
-            encoder_inputs = K.dropout(
-                encoder_inputs, self.params.layer_postprocess_dropout)
+        encoder_inputs = Dropout(self.params.layer_postprocess_dropout)(encoder_inputs)
 
         # TODO: add input padding
-        return self.encoder_stack([encoder_inputs, attention_bias], train=train)
+        return self.encoder_stack_network([encoder_inputs, attention_bias])
 
     def decode(self, targets, encoder_outputs, attention_bias, train):
         decoder_inputs = self.embedding_softmax_layer(targets, do_embedding=True)
@@ -66,6 +88,11 @@ class Transformer(Model):
             decoder_inputs = K.dropout(
                 decoder_inputs, self.params.layer_postprocess_dropout)
         decoder_self_attention_bias = get_decoder_self_attention_bias(length)
+
+        print("decoder_inputs shape: " + str(K.int_shape(decoder_inputs)))
+        print("encoder_outputs shape: " + str(K.int_shape(encoder_outputs)))
+        print("decoder_self_attention_bias: " + str(K.int_shape(decoder_self_attention_bias)))
+        print("attention_bias: " + str(K.int_shape(attention_bias)))
         outputs = self.decoder_stack(
             [decoder_inputs,
              encoder_outputs,
@@ -168,7 +195,7 @@ class Transformer(Model):
     def _get_predict_function(self):
         # inputs: int tensor with shape [batch_size, input_length].
         inputs = Input(shape=(None,), dtype="int32")
-        attention_bias = get_padding_bias(inputs)
+        attention_bias = padding_bias(inputs)
 
         # Run the inputs through the encoder layer to map the symbol
         # representations to continuous representations.
@@ -293,7 +320,8 @@ class EncoderStack(Layer):
             # Create sublayers for each layer.
             self_attention_layer = Attention(params.hidden_size,
                                              params.num_heads,
-                                             params.attention_dropout)
+                                             params.attention_dropout,
+                                             is_self_attention=True)
             feed_forward_network = FeedFowardNetwork(params.hidden_size,
                                                      params.filter_size,
                                                      params.relu_dropout)
@@ -330,25 +358,28 @@ def encoder_stack(embedded_input, attention_bias, params):
     def self_attention_processor(inputs):
         self_attention_layer = Attention(params.hidden_size,
                                          params.num_heads,
-                                         params.attention_dropout)
+                                         params.attention_dropout,
+                                         is_self_attention=True)
         return self_attention_layer(inputs), self_attention_layer
 
     def ffn_processor(inputs):
-        return feed_forward_network(inputs,
-                                    params.hidden_size,
-                                    params.filter_size,
-                                    params.relu_dropout)
+        return feed_forward_network(inputs, params)
 
     output_normalization = LayerNormalization(params.hidden_size)
 
+    wr = WeightsRef()
+    wr.layers = []
+    wr.output_normalization = output_normalization
+
     y = embedded_input
     for _ in range(params.num_hidden_layers):
-        y = pre_post_processor_wrapper(self_attention_processor,
+        y, aiwr = pre_post_processor_wrapper(self_attention_processor,
                                    [y, attention_bias],
                                    params)
-        y = pre_post_processor_wrapper(ffn_processor, y, params)
+        y, fiwr = pre_post_processor_wrapper(ffn_processor, y, params)
+        wr.layers.append([aiwr, fiwr])
 
-    return output_normalization(y)
+    return output_normalization(y), wr
 
 
 class DecoderStack(Layer):
@@ -359,10 +390,12 @@ class DecoderStack(Layer):
         for _ in range(params.num_hidden_layers):
             self_attention_layer = Attention(params.hidden_size,
                                              params.num_heads,
-                                             params.attention_dropout)
+                                             params.attention_dropout,
+                                             is_self_attention=True)
             enc_dec_attention_layer = Attention(params.hidden_size,
                                                 params.num_heads,
-                                                params.attention_dropout)
+                                                params.attention_dropout,
+                                                is_self_attention=False)
             feed_forward_network = FeedFowardNetwork(params.hidden_size,
                                                      params.filter_size,
                                                      params.relu_dropout)
@@ -404,3 +437,47 @@ class DecoderStack(Layer):
         return self.output_normalization(y)
 
     # TODO: add get_config/from_config
+
+
+def decoder_stack(decoder_inputs,
+                  encoder_outputs,
+                  decoder_self_attention_bias,
+                  attention_bias,
+                  params):
+
+    def self_attention_processor(inputs):
+        self_attention_layer = Attention(params.hidden_size,
+                                         params.num_heads,
+                                         params.attention_dropout,
+                                         is_self_attention=True)
+        return self_attention_layer(inputs), self_attention_layer
+
+    def enc_dec_attention_processor(inputs):
+        enc_dec_attention_layer = Attention(params.hidden_size,
+                                            params.num_heads,
+                                            params.attention_dropout,
+                                            is_self_attention=False)
+        return enc_dec_attention_layer(inputs), enc_dec_attention_layer
+
+    def ffn_processor(inputs):
+        return feed_forward_network(inputs, params)
+
+    output_normalization = LayerNormalization(params.hidden_size)
+
+    wr = WeightsRef()
+    wr.layers = []
+    wr.output_normalization = output_normalization
+
+    y = decoder_inputs
+    for _ in range(params.num_hidden_layers):
+        y, saiwr = pre_post_processor_wrapper(self_attention_processor,
+                                             [y, decoder_self_attention_bias],
+                                             params)
+        y, aiwr = pre_post_processor_wrapper(enc_dec_attention_processor,
+                                             [y, encoder_outputs, attention_bias],
+                                             params)
+
+        y, fiwr = pre_post_processor_wrapper(ffn_processor, y, params)
+        wr.layers.append([saiwr, aiwr, fiwr])
+
+    return output_normalization(y), wr

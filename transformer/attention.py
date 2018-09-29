@@ -15,6 +15,7 @@ class Attention(Layer):
                  hidden_size,
                  num_heads,
                  attention_dropout,
+                 is_self_attention,
                  **kwargs):
         if hidden_size % num_heads != 0:
             raise ValueError("Hidden size must be evenly divisible by the number of "
@@ -24,6 +25,7 @@ class Attention(Layer):
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.attention_dropout_layer = Dropout(attention_dropout)
+        self.is_self_attention = is_self_attention
 
         # Layers for linearly projecting the queries, keys, and values.
         self.q_dense_layer = Dense(hidden_size, use_bias=False, name=self.name + "_q")
@@ -59,14 +61,14 @@ class Attention(Layer):
 
     # input [batch_size, seq_len, input_vec_size]
     def call(self, inputs, cache=None, **kwargs):
-        if len(inputs) == 3:
-            x = inputs[0]
-            y = inputs[1]
-            bias = inputs[2]
-        elif len(inputs) == 2:
+        if self.is_self_attention:
             x = inputs[0]
             y = inputs[0]
             bias = inputs[1]
+        else:
+            x = inputs[0]
+            y = inputs[1]
+            bias = inputs[2]
 
         q = self.q_dense_layer(x)
         k = self.k_dense_layer(y)

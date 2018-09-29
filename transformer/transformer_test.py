@@ -219,6 +219,7 @@ if __name__ == '__main__':
     with printoptions(threshold=2000):
         print(tf_pred_res)
 
+    K.set_learning_phase(0)
     k_transformer = KTransformer(params)
     k_input_x_raw = Input(shape=(_seq_len_x,))
     k_input_y_raw = Input(shape=(_seq_len_y,))
@@ -228,7 +229,7 @@ if __name__ == '__main__':
     k_embedding_inputs = k_embedded_inputs + k_pos_encoding
 
     k_attention_bias = k_model_utils.get_padding_bias(k_input_x_raw)
-    k_encoder_outputs = k_transformer.encode(k_input_x_raw, k_attention_bias, train=False)
+    # k_encoder_outputs = k_transformer.encode(k_input_x_raw, k_attention_bias, train=False)
 
     k_output = k_transformer([k_input_x_raw, k_input_y_raw], train=False)
 

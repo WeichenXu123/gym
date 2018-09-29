@@ -62,6 +62,7 @@ if __name__ == '__main__':
     print("tf output:")
     print(tf_res)
 
+    K.set_learning_phase(0)
     # k_ffn = KFeedFowardNetwork(hidden_size, filter_size, relu_dropout=0.5)
     k_input = Input(shape=(_seq_len, hidden_size))
     # k_wrapper = KPrePostProcessingWrapper(k_ffn, params)
