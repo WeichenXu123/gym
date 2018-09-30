@@ -115,11 +115,6 @@ def shift_decoder_input(x):
     return Lambda(shift)(x)
 
 
-
-def decoder_self_attention_bias_layer():
-    return Lambda(lambda length: get_decoder_self_attention_bias(length))
-
-
 class LayerNormalization(Layer):
 
     def __init__(self, hidden_size):

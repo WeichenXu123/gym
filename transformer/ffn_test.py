@@ -1,9 +1,8 @@
 from official.transformer.model.ffn_layer import FeedFowardNetwork as TFFeedFowardNetwork
 from official.transformer.model.transformer import PrePostProcessingWrapper as TFPrePostProcessingWrapper
 
-from ffn import FeedFowardNetwork as KFeedFowardNetwork, feed_forward_network as Kfeed_forward_network
-from transformer import PrePostProcessingWrapper as KPrePostProcessingWrapper, \
-    pre_post_processor_wrapper as Kpre_post_processor_wrapper
+from ffn import feed_forward_network as Kfeed_forward_network
+from transformer import pre_post_processor_wrapper as Kpre_post_processor_wrapper
 
 import tensorflow as tf
 import numpy as np
