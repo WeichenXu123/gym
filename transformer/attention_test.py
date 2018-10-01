@@ -9,10 +9,9 @@ from official.transformer.model.model_utils import get_padding_bias as tf_get_pa
 from official.transformer.model.model_utils import get_decoder_self_attention_bias as tf_get_decoder_self_attention_bias
 
 from attention import Attention as KAttention
-from transformer import PrePostProcessingWrapper as KPrePostProcessingWrapper, \
-    pre_post_processor_wrapper as Kpre_post_processor_wrapper
+from transformer import pre_post_processor_wrapper as Kpre_post_processor_wrapper
 from model_utils import get_padding_bias as k_get_padding_bias
-from model_utils import get_decoder_self_attention_bias as k_get_decoder_self_attention_bias
+from model_utils import get_decoder_self_attention_bias_from_len as k_get_decoder_self_attention_bias_from_len
 from test_utils import rel_cmp
 
 if __name__ == '__main__':
@@ -131,7 +130,7 @@ if __name__ == '__main__':
                                   attention_dropout=0.5,
                                   is_self_attention=True)
     # k_wrapper = KPrePostProcessingWrapper(k_self_attention, params)
-    bias = k_get_decoder_self_attention_bias(seq_len_y)
+    bias = k_get_decoder_self_attention_bias_from_len(seq_len_y)
     # k_self_attention_output = k_wrapper([k_input_y, bias], train=False)
     def self_attention_processor(inputs):
         return k_self_attention(inputs), k_self_attention
